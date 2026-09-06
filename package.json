@@ -1,0 +1,11 @@
+{
+  "name": "inflight",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mission control — one page that answers where every Flow project is up to, and whether its automation is alive.",
+  "scripts": {
+    "test": "node --test \"bin/*.test.mjs\"",
+    "lint": "node --check bin/mission-control.mjs && node --check bin/liveness.mjs"
+  }
+}

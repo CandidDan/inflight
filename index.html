@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission control</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0e1116; --panel: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --crit: #f85149; --warn: #d29922; --good: #3fb950; --off: #6e7681;
+    --critical: #f85149; --attention: #d29922; --quiet: #3fb950;
+    --link: #58a6ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de; --text: #1f2328; --muted: #57606a; --link: #0969da; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  a { color: var(--link); }
+  header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; flex: 0 0 auto; }
+  #auth { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #auth input[type="password"] { width: 22em; max-width: 60vw; }
+  #status-line { margin-left: auto; color: var(--muted); font-size: 12px; }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .banner { padding: 10px 14px; border: 1px solid var(--warn); border-radius: 6px; margin-bottom: 16px; color: var(--warn); }
+  .banner.error { border-color: var(--crit); color: var(--crit); }
+  .repo { border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+  .repo-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--panel); }
+  .sev-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .sev-critical { background: var(--critical); }
+  .sev-attention { background: var(--attention); }
+  .sev-quiet { background: var(--quiet); }
+  .repo-head .name { font-weight: 600; }
+  .repo-head .desc { color: var(--muted); font-size: 12px; }
+  .repo-body { padding: 12px 16px; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .col h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .col ul { margin: 0; padding-left: 18px; }
+  .col li { margin-bottom: 4px; }
+  .machinery { display: flex; flex-wrap: wrap; gap: 6px; }
+  .m-chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; font-size: 12px; }
+  .m-dot { width: 8px; height: 8px; border-radius: 50%; }
+  .m-good { background: var(--good); } .m-warn { background: var(--warn); } .m-crit { background: var(--crit); } .m-off { background: var(--off); }
+  .unavailable { border-color: var(--crit); padding: 12px 16px; color: var(--crit); }
+  details.vision { border-top: 1px dashed var(--border); padding: 10px 16px; }
+  details.vision summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .vision-goal { margin-bottom: 8px; }
+  .vision-goal .activity { color: var(--muted); font-size: 12px; }
+  .non-goal { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  table.changelog { border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+  table.changelog td, table.changelog th { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+  .empty { color: var(--muted); font-style: italic; }
+  button { cursor: pointer; }
+  #owner-note { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Mission control</h1>
+  <div id="auth">
+    <input id="token" type="password" placeholder="Read-only fine-grained PAT (Contents, Actions, Issues, Pull requests, metadata)" autocomplete="off">
+    <label title="On file:// every local HTML file in this browser profile shares one storage origin, so another local page could read this token back out of localStorage. The token is still read-only, but know that before checking this."><input id="remember" type="checkbox"> Remember on this device</label>
+    <button id="connect">Load</button>
+    <span id="owner-note"></span>
+  </div>
+  <div id="status-line"></div>
+</header>
+<main id="app">
+  <p class="empty">
+    Paste a read-only PAT and press Load. Nothing is sent anywhere except <code>api.github.com</code>,
+    and this page makes no write calls — see <a href="README.md">README.md</a>. "Remember on this
+    device" stores the token in this browser's <code>localStorage</code>; left unchecked, it lives in
+    memory only and is gone when you close the tab. Opened via <code>file://</code>, every local HTML
+    file shares one storage origin in Chromium browsers, so checking "Remember" makes the token
+    readable by any other local page you open in this profile — the token is read-only-scoped either
+    way, but know that before opting in.
+  </p>
+</main>
+
+<script type="module">
+  import {
+    loadMissionControl, resolveOwner, createGitHubIO, createBudget, DEFAULT_REQUEST_CEILING,
+    renderMissionControlHTML, renderErrorBannerHTML, statusLineText,
+  } from "./bin/mission-control.mjs";
+
+  const STORAGE_KEY = "flightdeck-mission-control-pat";
+  const tokenInput = document.getElementById("token");
+  const rememberBox = document.getElementById("remember");
+  const connectBtn = document.getElementById("connect");
+  const ownerNote = document.getElementById("owner-note");
+  const statusLine = document.getElementById("status-line");
+  const app = document.getElementById("app");
+
+  // Prefill from a previously "remembered" token — never auto-fetch on load without a click,
+  // so opening the page never makes a network call the person didn't ask for.
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) { tokenInput.value = saved; rememberBox.checked = true; }
+  } catch { /* localStorage unavailable (private mode, file:// restrictions) — memory-only is fine */ }
+
+  connectBtn.addEventListener("click", () => { load().catch(showFatalError); });
+
+  // Nothing below decides WHAT to render — it wires DOM events, calls the tested fetch/derive/
+  // render functions in mission-control.mjs, and assigns their return values to the page. Every
+  // decision (what a row shows, how it sorts, how a value gets escaped) lives in, and is tested
+  // in, mission-control.mjs.
+  async function load() {
+    const token = tokenInput.value.trim();
+    if (!token) { showFatalError(new Error("Paste a read-only PAT first.")); return; }
+
+    try {
+      if (rememberBox.checked) localStorage.setItem(STORAGE_KEY, token);
+      else localStorage.removeItem(STORAGE_KEY);
+    } catch { /* storage may be unavailable — the in-memory token still works this session */ }
+
+    app.innerHTML = '<p class="empty">Loading…</p>';
+    statusLine.textContent = "";
+    const io = createGitHubIO(token);
+    const budget = createBudget(DEFAULT_REQUEST_CEILING);
+
+    const { login, type } = await resolveOwner({ io, budget });
+    ownerNote.textContent = `as ${login}`;
+
+    const doc = await loadMissionControl({ io, owner: login, ownerType: type, budget, now: Date.now() });
+    statusLine.textContent = statusLineText(doc);
+    app.innerHTML = renderMissionControlHTML(doc);
+  }
+
+  function showFatalError(err) {
+    app.innerHTML = renderErrorBannerHTML(err);
+  }
+</script>
+</body>
+</html>
